@@ -40,7 +40,7 @@ htmlcov/
 # --- Data ---
 data/
 backend/data/
-
+data/cms_real.csv
 # --- Backend runtime logs ---
 *.log
 backend/*.log
