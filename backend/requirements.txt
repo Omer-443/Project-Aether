@@ -1,0 +1,20 @@
+# Core Framework
+fastapi==0.116.0
+uvicorn[standard]==0.35.0
+
+# ML/Deep Learning Stack
+torch==2.7.1
+torchcde==0.2.5
+torchdiffeq==0.2.5
+
+# Data Processing
+polars==1.32.0
+pandas>=2.2.3
+numpy>=2.1.0
+
+# Utilities
+requests==2.31.0
+python-dotenv==1.0.0
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+

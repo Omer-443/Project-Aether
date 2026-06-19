@@ -1,0 +1,74 @@
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# VSCode
+.vscode/
+
+# JetBrains IDEs
+.idea/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenvs
+.venv/
+venv/
+ENV/
+
+tmp/
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Type check
+.mypy_cache/
+
+# --- PyTorch / model artifacts ---
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# --- Data ---
+data/
+backend/data/
+
+# --- Backend runtime logs ---
+*.log
+backend/*.log
+backend/**/*.log
+
+# --- Secrets / env ---
+.env
+.env.*
+!.env.example
+
+# --- Frontend build artifacts ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/build/
+frontend/.turbo/
+frontend/coverage/
+
+# --- Archives / bundles ---
+backend.zip
+
+# --- (Optional) local files not meant for public ---
+backend/models/
+backend/models/*.pt
+
+# --- Project docs that shouldn’t be pushed (optional) ---
+implementation_plan.md
+MASTER_CONTEXT.md
+TODO.md
+

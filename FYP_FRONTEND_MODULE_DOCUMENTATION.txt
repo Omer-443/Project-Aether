@@ -1,0 +1,416 @@
+FYP / PROJECT DOCUMENTATION — FRONTEND MODULES & ENDPOINT CONTRACT
+====================================================================
+
+This document provides an extremely detailed, FYP-style description of the frontend pages/components and the backend API endpoints they call, based strictly on the inspected files:
+- frontend/app/page.tsx (Dashboard)
+- frontend/app/visualizer/page.tsx (Visualizer)
+- frontend/app/shock-test/page.tsx (Shock Test) — reviewed for context
+- frontend/app/logs/page.tsx (Logs)
+- frontend/app/layout.tsx
+- frontend/app/loading.tsx
+- frontend/components/Sidebar.tsx
+- frontend/components/MainGrid.tsx
+- frontend/lib/api/aether-client.ts (API client + data types)
+
+Important accuracy note:
+- Repo-wide search and additional file inspection failed due to environment limitations (no ripgrep available), so this is fully accurate for the files listed above, but not guaranteed to cover every other file in the repo.
+
+
+0) Big-picture architecture (what the system is)
+---------------------------------------------------
+The project is a dark-mode telemetry + trajectory analytics UI for an ML model called “Liquid CDE”. The frontend is a Next.js “App Router” application.
+
+Pages:
+- / (Dashboard)
+- /visualizer (Trajectory Visualizer)
+- /shock-test (Policy Shock Simulator)
+- /logs (Telemetry table)
+
+All ML/telemetry data is fetched from a Python backend via HTTP endpoints under:
+- http://localhost:8000/api/v1/...
+(or a configured NEXT_PUBLIC_AETHER_API_BASE_URL)
+
+The frontend is mainly:
+- Presentational and interactive (charts, tables, controls)
+- Data-fetching wrapper around backend endpoints
+
+The actual “wow factor” comes from the shock-test simulation and trajectory generation.
+
+
+1) Shared frontend behaviors (applies to multiple pages)
+----------------------------------------------------------
+1.1 Dark theme + layout composition
+- frontend/app/layout.tsx builds the global HTML structure.
+- Sidebar (fixed left) + TopBar + MainGrid.
+- MainGrid adds left padding based on Sidebar width.
+
+1.2 API base URL resolution
+- frontend/lib/api/aether-client.ts defines DEFAULT_BASE_URL = 'http://localhost:8000'.
+- It reads NEXT_PUBLIC_AETHER_API_BASE_URL from process.env.
+- It strips trailing slashes.
+
+1.3 API request mechanics
+- GET requests use fetch(url, { credentials: 'include' })
+- POST requests include JSON body and credentials: 'include'
+- Errors:
+  - If response is not ok, it reads res.text() and throws an Error with status and body.
+
+1.4 Data typing
+- aether-client.ts defines TypeScript response types to match backend response models.
+
+
+2) API CLIENT DOCUMENTATION — frontend/lib/api/aether-client.ts
+---------------------------------------------------------------
+2.1 Types defined (key ones)
+- Tone = 'emerald' | 'rose' | 'amber' | 'zinc'
+- RiskLabel = 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL'
+
+DashboardTelemetryResponse:
+- metrics: DashboardMetric[]
+- ingestion: IngestionPoint[]
+- drifts: DriftAlert[]
+- status: Record<string, unknown>
+
+TrajectoryTelemetryResponse:
+- provider: string
+- events: Record<string, unknown>[]
+- trajectory: Array<{ time:number, z:number, friction:number, dim_0:number, dim_1:number, dim_2:number, dim_3:number, [k]:unknown }>
+- gaps: GapMarker[] where GapMarker={time:number,label:string,days:number}
+- denial_probability: number
+- risk_label: RiskLabel
+- stats: Record<string, unknown>
+
+LogsTelemetryResponse:
+- rows: LogsRow[] where LogsRow={ id, timestamp, cpt_opaque_id, continuous_time, latent_state, friction_score, status:'APPROVED'|'DENIED'|'PENDING'|'APPEALED' }
+- summary: Record<string, number>
+
+ShockTestResponse:
+- baseline_prob, shocked_prob, delta_prob, adaptation_score
+- shock_magnitude and shock_type
+- baseline_trajectory, shocked_trajectory
+- eval_times, interpretation
+
+2.2 API methods (endpoints invoked by pages)
+
+(1) getDashboardTelemetry(): GET
+- Endpoint: /api/v1/telemetry/dashboard
+- No parameters
+- Returns DashboardTelemetryResponse
+
+(2) getTrajectoryTelemetry(nEvents): GET
+- Endpoint: /api/v1/telemetry/trajectory?n_events=<nEvents>
+- Returns TrajectoryTelemetryResponse
+
+(3) getLogsTelemetry(limit): GET
+- Endpoint: /api/v1/telemetry/logs?limit=<limit>
+- Returns LogsTelemetryResponse
+
+(4) getSampleData(nEvents): GET
+- Endpoint: /api/v1/sample-data?n_events=<nEvents>
+- Returns SampleDataResponse (events + provider + date_range)
+
+(5) runShockTest(events, shockMagnitude, shockType): POST
+- Endpoint: /api/v1/shock-test
+- Body: { events, shock_magnitude, shock_type }
+- Body validation/limits are server-side
+- Returns ShockTestResponse
+
+
+3) PAGE DOCUMENTATION — frontend/app/page.tsx (Dashboard)
+----------------------------------------------------------
+3.1 Purpose
+The Dashboard page acts as a “system health overview” UI.
+It displays:
+- 4 metric cards (top metrics)
+- a small area chart (“System Health Trend”) derived from ingestion telemetry latency values
+- a quick stats panel (“Last 24h”) using ingestion telemetry
+- a “Recent Policy Drifts” table using drifts telemetry.
+
+3.2 Client execution
+- Declared with 'use client'
+- Uses hooks: useEffect/useMemo/useState
+
+3.3 Data fetching behavior
+- Creates state:
+  - state.data: DashboardTelemetryResponse | null
+  - state.loading
+  - state.error
+- useEffect with empty dependency:
+  - load() calls getDashboardTelemetry()
+  - sets interval to reload every 30,000 ms (30 seconds)
+- Cancel pattern:
+  - cancelled boolean prevents stale updates after unmount.
+
+3.4 Ingestion chart transformation (ingestionChart)
+- ingestion = state.data?.ingestion ?? []
+- values = ingestion.map(p => p.latency_ms).filter(Number.isFinite)
+- computes min and max of latency_ms
+- normalizes each latency_ms to a 0..100 range:
+  - normalized = ((raw - min) / (max - min || 1)) * 100
+  - time label formatted as: t.toString().padStart(2,'0') + ':00'
+- clamps values to [0,100]
+
+Important implication:
+- This chart is not raw latency in ms. It is normalized latency for UI.
+
+3.5 Drift table transformation (driftRows)
+- drifts = state.data?.drifts ?? []
+- maps to rows with:
+  - id = d.id
+  - policy = d.id
+  - drift = d.drift_score converted to number or null
+  - severity = d.severity
+
+3.6 Rendering details
+- Metric cards
+  - When loading: renders 4 “Loading” placeholder cards.
+  - When loaded:
+    - iterates state.data.metrics.slice(0,4)
+    - uses icon mapping based on tone (emerald/rose/amber).
+    - sets changeType = positive/negative/neutral based on tone.
+- Area chart:
+  - Recharts AreaChart using ingestionChart
+  - Area uses a green gradient fill
+- Policy drift table:
+  - row marker dot color based on severity.
+
+3.7 Backend endpoints involved
+- GET /api/v1/telemetry/dashboard
+- Provided by backend/app/api/routes.py
+
+
+4) PAGE DOCUMENTATION — frontend/app/visualizer/page.tsx (Trajectory Visualizer)
+--------------------------------------------------------------------------------
+4.1 Purpose
+This page is a “Trajectory Visualizer” (oscilloscope curve).
+It shows:
+- A Recharts LineChart of a derived latent signal:
+  - “Latent Z” mapped from trajectory latent dynamics
+- A second line:
+  - “Denial Friction” mapped from friction field
+- Optional vertical gap markers:
+  - ReferenceLine at each gap time
+- A stats card area:
+  - Current Value, Peak Value, Volatility, Events
+
+4.2 Client execution
+- 'use client'
+- hooks: useEffect/useMemo/useState
+
+4.3 Primary interaction model
+- The user controls nEvents indirectly via an “Intensity” slider and three “Event Injection” buttons.
+- Every time nEvents changes, the page fetches a new telemetry trajectory.
+
+4.4 Data fetching behavior
+- on mount and on nEvents change:
+  - setState loading true
+  - call getTrajectoryTelemetry(nEvents)
+  - setState with response
+- cancellation guard with a cancelled boolean.
+
+4.5 Intensity -> nEvents mapping
+- clampEventCount(value) => Math.max(2, Math.min(36, Math.round(value)))
+- requestFromIntensity(value):
+  - intensity = value
+  - nEvents = clampEventCount(4 + (value/100)*24)
+
+4.6 Event injection buttons impact
+- Extend Window:
+  - setNEvents(value => clampEventCount(value + 1))
+- Widen Gap:
+  - setNEvents(value => clampEventCount(value + 4))
+- Reset Window:
+  - setNEvents(12)
+
+4.7 Chart mapping (chartData)
+For each point returned by backend trajectory:
+- x = Number(point.time).toFixed(2)
+  - NOTE: toFixed returns a string
+- z = Math.round(Number(point.z ?? 0) * 10000)/100
+- friction = Math.round(Number(point.friction ?? 0) * 10000)/100
+
+Chart axes:
+- XAxis uses dataKey='x'
+- YAxis domain is hardcoded [0, 100]
+  - This assumes z has been scaled to roughly 0..100 after transformation.
+
+4.8 Gap markers mapping
+- gapLines = gaps.map(g => Number(g.time).toFixed(2))
+- each rendered with <ReferenceLine x={x} ... />
+
+4.9 Play/Pause behavior
+- isPlaying toggles Recharts line animation flags:
+  - isAnimationActive={isPlaying}
+  - animationDuration={isPlaying ? 2000 : 0}
+- It does not update the model or time-series progression; it is purely UI animation.
+
+4.10 Stats computed
+- current: last z
+- peak: max z
+- volatility:
+  - variance-like computation over zValues
+  - displayed as stats.volatility.toFixed(2) + '%'
+- events:
+  - state.data?.stats?.event_count
+    OR state.data?.events?.length
+    OR fallback nEvents
+
+4.11 Backend endpoint involved
+- GET /api/v1/telemetry/trajectory?n_events=<nEvents>
+
+
+5) PAGE DOCUMENTATION — frontend/app/shock-test/page.tsx (Shock Test Simulator)
+-------------------------------------------------------------------------------
+5.1 Purpose
+This page is a “Policy Shock Simulator”.
+It:
+- obtains a set of claim events (either from existing state.events or via getSampleData)
+- calls runShockTest(events, shock_magnitude, shock_type)
+- renders:
+  - baseline vs shocked trajectory lines
+  - computes adaptation metrics (latent shift, settling time, deviations)
+  - displays a narrative interpretation.
+
+5.2 Client execution
+- 'use client'
+- hooks: useEffect/useMemo/useState
+
+5.3 Shock configuration controls
+- shockActive: toggles running the shock simulation effect
+- shockStrength slider 1..100
+- shockType selection among Step / Impulse / Ramp
+
+shockStrength -> magnitude conversion:
+- magnitude = shockActive ? (shockStrength/100)*2 : 0.01
+
+5.4 Event selection model
+- useEffect loads sample events:
+  - sample = state.events.length ? { events: state.events } : await getSampleData(12)
+- Then calls runShockTest(sample.events, magnitude, shockType.toLowerCase())
+
+5.5 Chart mapping
+- For each baseline trajectory point:
+  - baseline = magnitude(point) computed from dim_0..dim_3 (root-sum-of-squares)
+  - liquid = magnitude(shocked point) computed similarly
+- time value is formatted from point.time or eval_times fallback
+
+5.6 Backend endpoint involved
+- GET /api/v1/sample-data?n_events=12 (only if state.events not present)
+- POST /api/v1/shock-test
+
+
+6) PAGE DOCUMENTATION — frontend/app/logs/page.tsx (Telemetry Logs)
+------------------------------------------------------------------------
+6.1 Purpose
+This page displays “Raw Telemetry Logs” in a table.
+It supports:
+- search filtering by action/cpt_opaque_id
+- status filtering by APPROVED/DENIED/PENDING/APPEALED
+- auto-refresh every 30 seconds
+- summary counters and average friction.
+
+6.2 Client execution
+- 'use client'
+- hooks: useEffect/useMemo/useState
+
+6.3 Data fetching behavior
+- On mount:
+  - getLogsTelemetry(80)
+- Then repeats every 30 seconds.
+- cancellation boolean prevents stale setState.
+
+6.4 Display mapping
+It maps LogsRow to DisplayLog:
+- id = r.id
+- time = r.timestamp
+- level = r.status
+- module = `CLAIM_${r.status}` (hardcoded formatting)
+- action = r.cpt_opaque_id
+- friction = Number(r.friction_score)
+
+6.5 Filtering behavior
+- matchesSearch:
+  - action.toLowerCase().includes(searchTerm.toLowerCase())
+- matchesLevel:
+  - filterLevel==='ALL' OR log.level===filterLevel
+
+6.6 Backend endpoint involved
+- GET /api/v1/telemetry/logs?limit=80
+
+
+7) GLOBAL UI DOCUMENTATION
+---------------------------
+7.1 frontend/app/layout.tsx
+- Root layout in Next.js.
+- Includes Sidebar and TopBar and MainGrid.
+- Sets HTML lang=en and className="dark bg-background".
+- Adds meta tags and title.
+
+Note:
+- TopBar component is referenced but its file was not included in inspected files list; thus it is not documented in this report beyond what is referenced.
+
+7.2 frontend/app/loading.tsx
+- Shows a simple “Loading…” message.
+
+7.3 frontend/components/Sidebar.tsx
+- Fixed left navigation.
+- Collapsible (isCollapsed state) toggled by a button.
+- Routes list:
+  - '/' => Dashboard
+  - '/visualizer' => Trajectory
+  - '/shock-test' => Shock Test
+  - '/logs' => Telemetry
+- Uses usePathname() to highlight active route.
+- Sidebar width transitions between 240 and 64.
+- Uses package version from package.json.
+
+7.4 frontend/components/MainGrid.tsx
+- Provides main content area.
+- It is fixed and scrollable.
+- Dynamically measures sidebar width (ResizeObserver on element id 'aether-sidebar')
+- Maintains paddingLeft state bounded between 64 and 240.
+
+
+8) END-TO-END DATA FLOW MAP (what calls what)
+------------------------------------------------
+User navigates to a page → page calls API client → API client calls backend endpoint → backend returns telemetry → page transforms and renders.
+
+8.1 Dashboard
+- Dashboard() → getDashboardTelemetry() → GET /api/v1/telemetry/dashboard
+
+8.2 Visualizer
+- VisualizerPage() → getTrajectoryTelemetry(nEvents) → GET /api/v1/telemetry/trajectory?n_events=...
+
+8.3 Shock Test
+- ShockTestPage() → getSampleData(12) (conditional) → GET /api/v1/sample-data?n_events=12
+- ShockTestPage() → runShockTest(events, magnitude, shockType) → POST /api/v1/shock-test
+
+8.4 Logs
+- LogsPage() → getLogsTelemetry(80) → GET /api/v1/telemetry/logs?limit=80
+
+
+9) BRUTALLY NEUTRAL LIMITATIONS (current system reality)
+----------------------------------------------------------
+Based on inspected code, these modules are mostly tied to backend-generated telemetry derived from deterministic sampling.
+
+Even though the UI is interactive, it does not necessarily guarantee:
+- that Dashboard/Logs/Visualizer are synchronized to the same exact “run” or event set used by Shock Test.
+
+Shock Test is the most “internally consistent” module because it consumes events + shock parameters and directly computes baseline vs shocked trajectories for those events.
+
+A true “full-fledged multi-module system” would likely require:
+- introducing a shared run_id and making all telemetry endpoints accept run_id, computed from user inputs
+
+However, for demo/wow-factor portfolio, the existing design still provides strong visualization.
+
+
+10) WHAT THIS DOCUMENT DOES NOT COVER (explicit)
+------------------------------------------------
+- It does not document every component/file in the repo; only the inspected ones.
+- It does not provide backend implementation details for each endpoint beyond what is necessary to explain the contract from frontend.
+- It does not guarantee correctness of endpoints not used by the inspected frontend pages.
+
+
+END OF DOCUMENT
+===============
+
